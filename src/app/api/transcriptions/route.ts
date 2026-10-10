@@ -21,13 +21,30 @@ export const runtime = "nodejs";
 
 class UploadTooLargeError extends Error {}
 
+function internalError(context: string, error: unknown) {
+  console.error(`[transcriptions] ${context}: ${error instanceof Error ? error.message : String(error)}`);
+  return NextResponse.json({ error: `${context}: errore interno del server.` }, { status: 500 });
+}
+
 export async function GET() {
-  await initJobs();
-  return NextResponse.json({ jobs: listJobs().map(toPublicJob) });
+  try {
+    await initJobs();
+    return NextResponse.json({ jobs: listJobs().map(toPublicJob) });
+  } catch (error: unknown) {
+    return internalError("Impossibile leggere la coda", error);
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    return await receiveUpload(request);
+  } catch (error: unknown) {
+    return internalError("Caricamento non riuscito", error);
+  }
 }
 
 /** Receives the raw file as the request body and streams it to disk without buffering it. */
-export async function POST(request: NextRequest) {
+async function receiveUpload(request: NextRequest) {
   await initJobs();
 
   if (!createOpenAIClient()) return missingApiKeyResponse();

@@ -20,6 +20,7 @@ import { FileDropzone } from "@/components/FileDropzone";
 import { SpeakerManager } from "@/components/SpeakerManager";
 import { ModelBadge } from "@/components/ModelBadge";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
+import { describeRequestError, fetchJson, HttpError } from "@/lib/fetch-json";
 import { formatBytes, LONG_TRANSCRIBE_FORMATS, validateMediaFile } from "@/lib/media-validation";
 import {
   ACTIVE_STATUSES,
@@ -28,6 +29,9 @@ import {
 } from "@/lib/transcription-jobs/types";
 
 const POLL_INTERVAL_MS = 2000;
+const POLL_TIMEOUT_MS = 15_000;
+const LOST_JOB_MESSAGE =
+  "Il server non trova più questa trascrizione (server riavviato o istanza diversa). Caricala di nuovo.";
 
 const secondaryButton =
   "inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900";
@@ -36,6 +40,8 @@ const dangerButton =
 
 type PendingFile = { key: string; file: File };
 type Upload = { key: string; file: File; progress: number; error: string | null };
+/** `lost` marks jobs this page knows about but the server no longer returns. */
+type ClientJob = TranscriptionJob & { lost?: boolean };
 
 function fileKey(file: File): string {
   return `${file.name}-${file.size}-${file.lastModified}`;
@@ -76,7 +82,10 @@ function uploadFile(
         // Non-JSON error page.
       }
       if (xhr.status >= 200 && xhr.status < 300 && data.job) resolve(data.job);
-      else reject(new Error(data.error ?? `Caricamento fallito (HTTP ${xhr.status}).`));
+      else if (data.error) reject(new Error(data.error));
+      else if (xhr.status === 413) reject(new Error("Il server ha rifiutato il file perché troppo grande."));
+      else if (xhr.status >= 500) reject(new Error(`Errore di connessione o timeout del server (HTTP ${xhr.status}).`));
+      else reject(new Error(`Caricamento fallito (HTTP ${xhr.status}).`));
     };
     xhr.onerror = () => reject(new Error("Connessione al server interrotta durante il caricamento."));
     xhr.onabort = () => reject(new DOMException("Caricamento annullato.", "AbortError"));
@@ -85,10 +94,25 @@ function uploadFile(
 }
 
 async function fetchJobs(): Promise<TranscriptionJob[]> {
-  const response = await fetch("/api/transcriptions", { cache: "no-store" });
-  const data = (await response.json()) as { jobs?: TranscriptionJob[]; error?: string };
-  if (!response.ok || !data.jobs) throw new Error(data.error ?? "Impossibile leggere la coda.");
+  const data = await fetchJson<{ jobs?: TranscriptionJob[] }>(
+    "/api/transcriptions",
+    { cache: "no-store" },
+    POLL_TIMEOUT_MS,
+  );
+  if (!Array.isArray(data.jobs)) throw new Error("Risposta del server non valida.");
   return data.jobs;
+}
+
+/**
+ * Applies the server list without silently dropping jobs: a job the server no longer
+ * returns (restart, another serverless instance) stays visible with an explanation.
+ */
+function mergeJobs(current: ClientJob[], latest: TranscriptionJob[], removed: Set<string>): ClientJob[] {
+  const latestIds = new Set(latest.map((job) => job.id));
+  const lost = current
+    .filter((job) => !latestIds.has(job.id) && !removed.has(job.id))
+    .map((job): ClientJob => (job.lost ? job : { ...job, status: "error", error: LOST_JOB_MESSAGE, lost: true }));
+  return [...latest.filter((job) => !removed.has(job.id)), ...lost];
 }
 
 function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -130,21 +154,30 @@ export function BulkTranscriptionPanel() {
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [rejected, setRejected] = useState<string[]>([]);
   const [uploads, setUploads] = useState<Upload[]>([]);
-  const [jobs, setJobs] = useState<TranscriptionJob[]>([]);
+  const [jobs, setJobs] = useState<ClientJob[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const xhrRefs = useRef(new Map<string, XMLHttpRequest>());
   const uploadingRef = useRef(false);
+  const removedIds = useRef(new Set<string>());
 
+  // On failure the current list stays on screen: only the error message changes.
   const onRefreshError = useCallback((refreshError: unknown) => {
-    setError(refreshError instanceof Error ? refreshError.message : "Impossibile leggere la coda.");
+    setPollError(describeRequestError(refreshError));
+  }, []);
+
+  const applyJobs = useCallback((latest: TranscriptionJob[]) => {
+    setJobs((current) => mergeJobs(current, latest, removedIds.current));
+    setPollError(null);
   }, []);
 
   const refreshJobs = useCallback(
-    () => fetchJobs().then(setJobs, onRefreshError),
-    [onRefreshError],
+    () => fetchJobs().then(applyJobs, onRefreshError),
+    [applyJobs, onRefreshError],
   );
 
   const hasActiveJobs = jobs.some((job) => ACTIVE_STATUSES.includes(job.status));
@@ -159,7 +192,7 @@ export function BulkTranscriptionPanel() {
     const tick = () =>
       fetchJobs().then(
         (latest) => {
-          if (!cancelled) setJobs(latest);
+          if (!cancelled) applyJobs(latest);
         },
         (refreshError: unknown) => {
           if (!cancelled) onRefreshError(refreshError);
@@ -171,7 +204,7 @@ export function BulkTranscriptionPanel() {
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [shouldPoll, onRefreshError]);
+  }, [shouldPoll, applyJobs, onRefreshError]);
 
   const manualRefresh = () => {
     setRefreshing(true);
@@ -263,54 +296,84 @@ export function BulkTranscriptionPanel() {
     else setUploads((current) => current.filter((upload) => upload.key !== key));
   };
 
-  const removeJob = async (job: TranscriptionJob) => {
+  const removeJob = async (job: ClientJob) => {
     const question =
       job.status === "done"
         ? `Eliminare la trascrizione di "${job.fileName}"?`
         : `Annullare la trascrizione di "${job.fileName}"? Il lavoro svolto andrà perso.`;
     if (!window.confirm(question)) return;
-    const response = await fetch(`/api/transcriptions/${job.id}`, { method: "DELETE" });
-    if (!response.ok) setError("Eliminazione non riuscita.");
-    setPreviews((current) => withoutKey(current, job.id));
-    void refreshJobs();
-  };
-
-  const retryJob = async (job: TranscriptionJob) => {
-    const response = await fetch(`/api/transcriptions/${job.id}/retry`, { method: "POST" });
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as { error?: string };
-      setError(data.error ?? "Impossibile riprovare la trascrizione.");
+    setBusyJobId(job.id);
+    try {
+      await fetchJson(`/api/transcriptions/${job.id}`, { method: "DELETE" });
+    } catch (removeError: unknown) {
+      // 404: the server already forgot it, so removing it from the list is all that is left.
+      if (!(removeError instanceof HttpError && removeError.status === 404)) {
+        setError(describeRequestError(removeError, "Eliminazione non riuscita."));
+        return;
+      }
+    } finally {
+      setBusyJobId(null);
     }
-    void refreshJobs();
+    removedIds.current.add(job.id);
+    setJobs((current) => current.filter((item) => item.id !== job.id));
+    setPreviews((current) => withoutKey(current, job.id));
   };
 
-  const fetchTranscript = async (job: TranscriptionJob): Promise<string> => {
+  const retryJob = async (job: ClientJob) => {
+    setBusyJobId(job.id);
+    setError(null);
+    try {
+      await fetchJson(`/api/transcriptions/${job.id}/retry`, { method: "POST" });
+      await refreshJobs();
+    } catch (retryError: unknown) {
+      setError(describeRequestError(retryError, "Impossibile riprovare la trascrizione."));
+    } finally {
+      setBusyJobId(null);
+    }
+  };
+
+  const fetchTranscript = async (job: ClientJob): Promise<string> => {
     if (previews[job.id] !== undefined) return previews[job.id];
-    const response = await fetch(`/api/transcriptions/${job.id}/transcript`);
-    if (!response.ok) throw new Error("Impossibile leggere la trascrizione.");
+    const response = await fetch(`/api/transcriptions/${job.id}/transcript`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      throw new Error(
+        response.status >= 500
+          ? `Errore di connessione o timeout del server (HTTP ${response.status}).`
+          : "Impossibile leggere la trascrizione.",
+      );
+    }
     return response.text();
   };
 
-  const togglePreview = async (job: TranscriptionJob) => {
+  const togglePreview = async (job: ClientJob) => {
     if (previews[job.id] !== undefined) {
       setHidden((current) => ({ ...current, [job.id]: !current[job.id] }));
       return;
     }
+    setBusyJobId(job.id);
     try {
       const text = await fetchTranscript(job);
       setPreviews((current) => ({ ...current, [job.id]: text }));
     } catch (previewError: unknown) {
-      setError(previewError instanceof Error ? previewError.message : "Anteprima non disponibile.");
+      setError(describeRequestError(previewError, "Anteprima non disponibile."));
+    } finally {
+      setBusyJobId(null);
     }
   };
 
-  const copyTranscript = async (job: TranscriptionJob) => {
+  const copyTranscript = async (job: ClientJob) => {
     try {
       await navigator.clipboard.writeText(await fetchTranscript(job));
       setCopiedId(job.id);
       setTimeout(() => setCopiedId((current) => (current === job.id ? null : current)), 2000);
-    } catch {
-      setError("Copia negli appunti non riuscita.");
+    } catch (copyError: unknown) {
+      setError(
+        copyError instanceof DOMException && copyError.name === "NotAllowedError"
+          ? "Copia negli appunti non riuscita."
+          : describeRequestError(copyError, "Copia negli appunti non riuscita."),
+      );
     }
   };
 
@@ -327,6 +390,9 @@ export function BulkTranscriptionPanel() {
 
       {rejected.length > 0 && <ErrorBanner message={`File scartati — ${rejected.join(" · ")}`} />}
       {error && <ErrorBanner message={error} />}
+      {pollError && (
+        <ErrorBanner message={`Aggiornamento dello stato non riuscito: ${pollError} Riprovo automaticamente.`} />
+      )}
 
       {pending.length > 0 && (
         <section className="space-y-4 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/20">
@@ -487,6 +553,7 @@ export function BulkTranscriptionPanel() {
             {jobs.map((job) => {
               const active = ACTIVE_STATUSES.includes(job.status);
               const progress = jobProgress(job);
+              const busy = busyJobId === job.id;
               return (
                 <li
                   key={job.id}
@@ -562,8 +629,15 @@ export function BulkTranscriptionPanel() {
                           )}
                           {copiedId === job.id ? "Copiato" : "Copia negli appunti"}
                         </button>
-                        <button type="button" onClick={() => void togglePreview(job)} className={secondaryButton}>
-                          {previews[job.id] !== undefined && !hidden[job.id] ? (
+                        <button
+                          type="button"
+                          onClick={() => void togglePreview(job)}
+                          disabled={busy}
+                          className={secondaryButton}
+                        >
+                          {busy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                          ) : previews[job.id] !== undefined && !hidden[job.id] ? (
                             <EyeOff className="h-3.5 w-3.5" aria-hidden />
                           ) : (
                             <Eye className="h-3.5 w-3.5" aria-hidden />
@@ -574,13 +648,38 @@ export function BulkTranscriptionPanel() {
                         </button>
                       </>
                     )}
-                    {job.status === "error" && (
-                      <button type="button" onClick={() => void retryJob(job)} className={secondaryButton}>
+                    {job.status === "error" && previews[job.id] !== undefined && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadTextFile(
+                            previews[job.id],
+                            `${baseNameOf(job.fileName, "trascrizione")}-trascrizione.txt`,
+                          )
+                        }
+                        className={secondaryButton}
+                      >
+                        <Download className="h-3.5 w-3.5" aria-hidden />
+                        Scarica .txt
+                      </button>
+                    )}
+                    {job.status === "error" && !job.lost && (
+                      <button
+                        type="button"
+                        onClick={() => void retryJob(job)}
+                        disabled={busy}
+                        className={secondaryButton}
+                      >
                         <RotateCcw className="h-3.5 w-3.5" aria-hidden />
                         Riprova
                       </button>
                     )}
-                    <button type="button" onClick={() => void removeJob(job)} className={dangerButton}>
+                    <button
+                      type="button"
+                      onClick={() => void removeJob(job)}
+                      disabled={busy}
+                      className={`${dangerButton} disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
                       {active ? <X className="h-3.5 w-3.5" aria-hidden /> : <Trash2 className="h-3.5 w-3.5" aria-hidden />}
                       {active ? "Annulla" : "Cancella"}
                     </button>

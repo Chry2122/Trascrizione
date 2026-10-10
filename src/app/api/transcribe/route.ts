@@ -2,12 +2,28 @@ import { NextRequest, NextResponse } from "next/server";
 import { TRANSCRIBE_FORMATS, validateMediaFile } from "@/lib/media-validation";
 import {
   createOpenAIClient,
+  describeOpenAIError,
   missingApiKeyResponse,
   openAIErrorResponse,
 } from "@/lib/openai-server";
 import { diarizeTranscript } from "@/lib/speaker-diarization";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
+  try {
+    return await transcribe(request);
+  } catch (error: unknown) {
+    console.error(`[transcribe] errore interno: ${describeOpenAIError(error)}`);
+    return NextResponse.json(
+      { error: "Errore interno del server durante la trascrizione. Riprova." },
+      { status: 500 },
+    );
+  }
+}
+
+async function transcribe(request: NextRequest) {
   const openai = createOpenAIClient();
   if (!openai) return missingApiKeyResponse();
 

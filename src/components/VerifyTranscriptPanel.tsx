@@ -17,6 +17,7 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { FileDropzone } from "@/components/FileDropzone";
 import { ModelBadge } from "@/components/ModelBadge";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
+import { describeRequestError } from "@/lib/fetch-json";
 import {
   formatBytes,
   MAX_TRANSCRIPT_CHARS,
@@ -162,7 +163,13 @@ export function VerifyTranscriptPanel() {
 
   const loadTextFile = async (file: File | undefined) => {
     if (!file) return;
-    const text = await file.text();
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      setError("Impossibile leggere il file di testo.");
+      return;
+    }
     if (text.length > MAX_TRANSCRIPT_CHARS) {
       setError(
         `Il file di testo supera il limite di ${MAX_TRANSCRIPT_CHARS.toLocaleString("it-IT")} caratteri.`,
@@ -227,11 +234,7 @@ export function VerifyTranscriptPanel() {
     } catch (verifyError: unknown) {
       if (controller.signal.aborted) return;
       const aborted = verifyError instanceof DOMException && verifyError.name === "AbortError";
-      if (!aborted) {
-        setError(
-          verifyError instanceof Error ? verifyError.message : "Impossibile contattare il server.",
-        );
-      }
+      if (!aborted) setError(describeRequestError(verifyError));
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;

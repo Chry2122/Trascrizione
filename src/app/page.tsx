@@ -4,6 +4,7 @@ import { AudioLines, FileCheck2, FileText } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 import { BulkTranscriptionPanel } from "@/components/BulkTranscriptionPanel";
 import { CleanAudioPanel } from "@/components/CleanAudioPanel";
+import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { VerifyTranscriptPanel } from "@/components/VerifyTranscriptPanel";
 
 const TABS = [
@@ -93,7 +94,7 @@ export default function Home() {
         })}
       </div>
 
-      {TABS.map(({ id, description, Panel }) => (
+      {TABS.map(({ id, label, description, Panel }) => (
         <section
           key={id}
           id={`panel-${id}`}
@@ -103,7 +104,9 @@ export default function Home() {
           className="space-y-4"
         >
           <p className="text-sm text-zinc-600 dark:text-zinc-400">{description}</p>
-          <Panel />
+          <PanelErrorBoundary title={label}>
+            <Panel />
+          </PanelErrorBoundary>
         </section>
       ))}
     </main>
