@@ -3,6 +3,7 @@
 import { Download, FileAudio, Loader2, RotateCcw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { EstimatedProgress } from "@/components/EstimatedProgress";
 import { FileDropzone } from "@/components/FileDropzone";
 import {
   CLEAN_OUTPUT_FORMATS,
@@ -241,12 +242,11 @@ export function CleanAudioPanel() {
                   ? `Caricamento del file… ${Math.round(progress * 100)}%`
                   : `Pulizia dell'audio in corso… ${Math.round(progress * 100)}%`}
               </p>
-              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-[width]"
-                  style={{ width: `${progress * 100}%` }}
-                />
-              </div>
+              <EstimatedProgress
+                key={phase}
+                progress={progress}
+                label={phase === "uploading" ? "Caricamento del file" : "Pulizia dell'audio"}
+              />
             </div>
           )}
 

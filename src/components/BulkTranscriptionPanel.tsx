@@ -17,8 +17,11 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { FileDropzone } from "@/components/FileDropzone";
+import { EstimatedProgress } from "@/components/EstimatedProgress";
 import { SpeakerManager } from "@/components/SpeakerManager";
 import { ModelBadge } from "@/components/ModelBadge";
+import { readMediaDuration } from "@/lib/audio-duration";
+import { estimateJobProgress } from "@/lib/processing-estimate";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
 import { describeRequestError, fetchJson, HttpError } from "@/lib/fetch-json";
 import { formatBytes, LONG_TRANSCRIBE_FORMATS, validateMediaFile } from "@/lib/media-validation";
@@ -121,16 +124,6 @@ function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T
   return copy;
 }
 
-function jobProgress(job: TranscriptionJob): number {
-  if (job.status === "done") return 1;
-  if (job.status === "analyzing") return job.analysisProgress;
-  if (job.status === "labeling") {
-    return job.totalSegments > 0 ? job.labeledSegments / job.totalSegments : 0;
-  }
-  if (job.totalChunks > 0) return job.completedChunks / job.totalChunks;
-  return 0;
-}
-
 function statusLabel(job: TranscriptionJob): string {
   switch (job.status) {
     case "queued":
@@ -161,6 +154,9 @@ export function BulkTranscriptionPanel() {
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
+  // Audio length read in the browser at upload time, so the estimate exists before the
+  // server has analysed the file.
+  const [fileDurations, setFileDurations] = useState<Record<string, number>>({});
   const xhrRefs = useRef(new Map<string, XMLHttpRequest>());
   const uploadingRef = useRef(false);
   const removedIds = useRef(new Set<string>());
@@ -244,8 +240,9 @@ export function BulkTranscriptionPanel() {
     uploadingRef.current = true;
     try {
       for (const item of queue) {
+        const duration = readMediaDuration(item.file);
         try {
-          await uploadFile(
+          const job = await uploadFile(
             item.file,
             { language, labelSpeakers },
             (progress) =>
@@ -255,6 +252,9 @@ export function BulkTranscriptionPanel() {
             (xhr) => xhrRefs.current.set(item.key, xhr),
           );
           setUploads((current) => current.filter((upload) => upload.key !== item.key));
+          void duration.then((seconds) => {
+            if (seconds !== null) setFileDurations((current) => ({ ...current, [job.id]: seconds }));
+          });
           void refreshJobs();
         } catch (uploadError: unknown) {
           const aborted = uploadError instanceof DOMException && uploadError.name === "AbortError";
@@ -511,12 +511,7 @@ export function BulkTranscriptionPanel() {
                 {upload.error ? (
                   <p className="text-xs text-red-700 dark:text-red-300">{upload.error}</p>
                 ) : (
-                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                    <div
-                      className="h-full rounded-full bg-emerald-500 transition-[width]"
-                      style={{ width: `${upload.progress * 100}%` }}
-                    />
-                  </div>
+                  <EstimatedProgress progress={upload.progress} label={`Caricamento di ${upload.file.name}`} />
                 )}
               </li>
             ))}
@@ -552,7 +547,7 @@ export function BulkTranscriptionPanel() {
           <ul className="space-y-3">
             {jobs.map((job) => {
               const active = ACTIVE_STATUSES.includes(job.status);
-              const progress = jobProgress(job);
+              const estimate = active ? estimateJobProgress(job, fileDurations[job.id] ?? null) : null;
               const busy = busyJobId === job.id;
               return (
                 <li
@@ -582,13 +577,13 @@ export function BulkTranscriptionPanel() {
                     </span>
                   </div>
 
-                  {active && (
-                    <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                      <div
-                        className="h-full rounded-full bg-emerald-500 transition-[width] duration-500"
-                        style={{ width: `${progress * 100}%` }}
-                      />
-                    </div>
+                  {estimate && (
+                    <EstimatedProgress
+                      progress={estimate.progress}
+                      step={estimate.step}
+                      estimateSec={estimate.totalSec}
+                      label={`Elaborazione di ${job.fileName}`}
+                    />
                   )}
 
                   {job.status === "error" && job.error && (

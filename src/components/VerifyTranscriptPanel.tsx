@@ -14,10 +14,13 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { EstimatedProgress } from "@/components/EstimatedProgress";
 import { FileDropzone } from "@/components/FileDropzone";
 import { ModelBadge } from "@/components/ModelBadge";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
+import { readMediaDuration } from "@/lib/audio-duration";
 import { describeRequestError } from "@/lib/fetch-json";
+import { estimateVerifyProgress, type VerifyStage } from "@/lib/processing-estimate";
 import {
   formatBytes,
   MAX_TRANSCRIPT_CHARS,
@@ -40,26 +43,31 @@ const secondaryButton =
 type Status =
   | { phase: "idle" }
   | { phase: "uploading"; ratio: number }
-  | { phase: "working"; label: string; ratio: number | null };
+  | { phase: "working"; label: string; stage: VerifyStage };
 
 function statusFromEvent(event: Extract<VerifyStreamEvent, { type: "progress" }>): Status {
   switch (event.stage) {
     case "analyzing":
-      return { phase: "working", label: `Analisi delle pause nell'audio… ${Math.round(event.ratio * 100)}%`, ratio: event.ratio };
+      return {
+        phase: "working",
+        label: "Analisi delle pause nell'audio…",
+        stage: { stage: "analyzing", ratio: event.ratio },
+      };
     case "transcribing":
       return {
         phase: "working",
         label: `Trascrizione dell'audio: blocco ${event.done} di ${event.total}`,
-        ratio: event.total > 0 ? event.done / event.total : null,
+        stage: { stage: "transcribing", done: event.done, total: event.total },
       };
     case "comparing":
-      return event.total <= 1
-        ? { phase: "working", label: "Confronto con la trascrizione fornita…", ratio: null }
-        : {
-            phase: "working",
-            label: `Confronto delle differenze: gruppo ${event.done} di ${event.total}`,
-            ratio: event.done / event.total,
-          };
+      return {
+        phase: "working",
+        label:
+          event.total <= 1
+            ? "Confronto con la trascrizione fornita (gpt-4o)…"
+            : `Confronto delle differenze (gpt-4o): gruppo ${event.done} di ${event.total}`,
+        stage: { stage: "comparing", done: event.done, total: event.total },
+      };
   }
 }
 
@@ -101,6 +109,7 @@ function discardUpload(uploadId: string | null) {
 
 export function VerifyTranscriptPanel() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileDuration, setFileDuration] = useState<number | null>(null);
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [language, setLanguage] = useState("it");
   const [providedTranscript, setProvidedTranscript] = useState("");
@@ -111,6 +120,7 @@ export function VerifyTranscriptPanel() {
   const abortRef = useRef<AbortController | null>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const textFileRef = useRef<HTMLInputElement>(null);
+  const selectedFileRef = useRef<File | null>(null);
 
   useEffect(
     () => () => {
@@ -135,6 +145,8 @@ export function VerifyTranscriptPanel() {
     discardUpload(uploadId);
     setUploadId(null);
     setSelectedFile(null);
+    selectedFileRef.current = null;
+    setFileDuration(null);
     setProvidedTranscript("");
     setResult(null);
     setError(null);
@@ -146,6 +158,7 @@ export function VerifyTranscriptPanel() {
     setResult(null);
     discardUpload(uploadId);
     setUploadId(null);
+    setFileDuration(null);
     const validationError = validateMediaFile(file, VERIFY_FORMATS);
     if (validationError) {
       setSelectedFile(null);
@@ -154,6 +167,10 @@ export function VerifyTranscriptPanel() {
     }
     setError(null);
     setSelectedFile(file);
+    selectedFileRef.current = file;
+    void readMediaDuration(file).then((seconds) => {
+      if (selectedFileRef.current === file) setFileDuration(seconds);
+    });
   };
 
   const onTranscriptChange = (value: string) => {
@@ -203,7 +220,7 @@ export function VerifyTranscriptPanel() {
         setUploadId(id);
       }
 
-      setStatus({ phase: "working", label: "Preparazione…", ratio: null });
+      setStatus({ phase: "working", label: "Preparazione…", stage: { stage: "preparing" } });
       const body: VerifyRequestBody = { uploadId: id, providedTranscript, language };
       const response = await fetch("/api/verify-transcript", {
         method: "POST",
@@ -264,8 +281,10 @@ export function VerifyTranscriptPanel() {
 
   const canVerify = Boolean(selectedFile) && providedTranscript.trim() !== "" && !isBusy;
   const hasState = Boolean(selectedFile || providedTranscript || result || error || isBusy);
-  const progressRatio =
-    status.phase === "uploading" ? status.ratio : status.phase === "working" ? status.ratio : null;
+  const workEstimate =
+    status.phase === "working"
+      ? estimateVerifyProgress(status.stage, fileDuration, providedTranscript.length)
+      : null;
 
   return (
     <div className="space-y-6">
@@ -387,13 +406,17 @@ export function VerifyTranscriptPanel() {
                 ? status.label
                 : ""}
           </p>
-          {progressRatio !== null && (
-            <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-              <div
-                className="h-full rounded-full bg-emerald-500 transition-[width]"
-                style={{ width: `${progressRatio * 100}%` }}
-              />
-            </div>
+          {status.phase === "uploading" && (
+            <EstimatedProgress key="upload" progress={status.ratio} label="Caricamento dell'audio" />
+          )}
+          {workEstimate && (
+            <EstimatedProgress
+              key="work"
+              progress={workEstimate.progress}
+              step={workEstimate.step}
+              estimateSec={workEstimate.totalSec}
+              label="Verifica della trascrizione"
+            />
           )}
         </div>
       )}
