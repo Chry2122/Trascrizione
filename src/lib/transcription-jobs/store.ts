@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { TMP_ROOT } from "@/lib/tmp-root";
 import type { ChunkPlan } from "@/lib/transcription-jobs/audio";
 import { ACTIVE_STATUSES, type TranscriptionJob } from "@/lib/transcription-jobs/types";
 
@@ -15,7 +16,7 @@ type StoreState = {
   loading: Promise<string[]> | null;
 };
 
-const DATA_DIR = path.join(process.cwd(), ".data", "transcriptions");
+const DATA_DIR = path.join(TMP_ROOT, "transcriptions");
 
 const globalStore = globalThis as typeof globalThis & { __transcriptionStore?: StoreState };
 const state: StoreState = (globalStore.__transcriptionStore ??= {

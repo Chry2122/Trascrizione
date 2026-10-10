@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { TMP_ROOT } from "@/lib/tmp-root";
 
 export type StorageKind = "clean" | "verify";
 
-const ROOT = path.join(process.cwd(), ".data");
+const ROOT = TMP_ROOT;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
