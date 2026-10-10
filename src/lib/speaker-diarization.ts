@@ -1,15 +1,20 @@
 import type OpenAI from "openai";
 import {
-  mergeTierInfo,
-  runTiered,
+  DIARIZATION_MODEL,
+  mergeModelInfo,
+  ModelResponseError,
+  runJsonTask,
   splitTextIntoSegments,
-  TieredAIError,
-  toTierInfo,
-  type TierInfo,
-} from "@/lib/tiered-ai";
+  type ModelInfo,
+} from "@/lib/ai-model";
 import { diffTokens, tokenize } from "@/lib/transcript-alignment";
 
 const SEGMENT_MAX_CHARS = 3000;
+const SEGMENT_MAX_OUTPUT_TOKENS = 4096;
+// Up to this length the whole transcript is labeled with one call; the labeled copy must
+// still fit within gpt-4o-mini's 16k output tokens.
+const SINGLE_PASS_MAX_CHARS = 36_000;
+const SINGLE_PASS_MAX_OUTPUT_TOKENS = 16_000;
 const CONTEXT_CHARS = 800;
 // Labelling may fix a few misheard words, but a larger share of changed words means the
 // model rewrote the text, so that segment keeps the Whisper text instead.
@@ -22,10 +27,9 @@ Regole obbligatorie:
 - NON riassumere, NON riformulare, NON tradurre, NON omettere e NON aggiungere parole. Puoi correggere solo parole evidentemente trascritte male dal riconoscimento vocale. Mantieni la punteggiatura.
 - Non hai l'audio: deduci i cambi di voce dal contenuto (domande e risposte, nomi o vocativi, cambi di punto di vista, risposte brevi come "sì", "esatto", "certo"). Se è un monologo usa solo "Voce 1".
 - Se ricevi i parlanti già individuati nei segmenti precedenti, usa la stessa etichetta per la stessa persona e assegna un numero nuovo solo a persone nuove. Il segmento può iniziare a metà dell'intervento dell'ultimo parlante del segmento precedente.
-Campi JSON specifici del compito:
+Rispondi ESCLUSIVAMENTE con un oggetto JSON valido con questi campi:
 - "text": il segmento completo con le etichette, un intervento per riga.
-- "parlanti": array di oggetti { "etichetta": "Voce N", "descrizione": "..." } con TUTTI i parlanti individuati finora (anche quelli dei segmenti precedenti), dove "descrizione" è una frase breve su chi è (ruolo, nome se viene detto, di cosa parla).
-- "confidenceScore" indica quanto sei sicuro dell'attribuzione degli interventi ai parlanti.`;
+- "parlanti": array di oggetti { "etichetta": "Voce N", "descrizione": "..." } con TUTTI i parlanti individuati finora (anche quelli dei segmenti precedenti), dove "descrizione" è una frase breve su chi è (ruolo, nome se viene detto, di cosa parla).`;
 
 export type Speaker = { label: string; description: string };
 
@@ -35,7 +39,7 @@ export type DiarizationState = { speakers: Speaker[]; tail: string };
 export type DiarizedSegment = {
   text: string;
   labeled: boolean;
-  tier: TierInfo | null;
+  ai: ModelInfo | null;
   state: DiarizationState;
 };
 
@@ -121,35 +125,36 @@ export async function diarizeSegment(
   segment: string,
   state: DiarizationState,
   signal: AbortSignal,
+  maxOutputTokens = SEGMENT_MAX_OUTPUT_TOKENS,
 ): Promise<DiarizedSegment> {
   try {
-    const run = await runTiered<{ text: string; speakers: Speaker[] }>({
+    const { text, speakers } = await runJsonTask({
       client: openai,
+      model: DIARIZATION_MODEL,
       signal,
       taskName: "diarization",
       instructions: INSTRUCTIONS,
       input: buildInput(segment, state),
-      maxOutputTokens: 4096,
-      parseExtra: (record, base) => {
-        const text = normalizeLabeledText(base.text);
+      maxOutputTokens,
+      parse: (record) => {
+        const text = typeof record.text === "string" ? normalizeLabeledText(record.text) : null;
         if (!text || changedRatio(segment, text) > MAX_CHANGED_RATIO) return null;
         return { text, speakers: readSpeakers(record.parlanti) ?? state.speakers };
       },
     });
-    const { text, speakers } = run.extra;
     return {
       text,
       labeled: true,
-      tier: toTierInfo(run),
+      ai: { model: DIARIZATION_MODEL, calls: 1 },
       state: {
         speakers: speakers.length > 0 ? speakers : state.speakers,
         tail: text.slice(-CONTEXT_CHARS),
       },
     };
   } catch (error: unknown) {
-    if (!(error instanceof TieredAIError) || signal.aborted) throw error;
+    if (!(error instanceof ModelResponseError) || signal.aborted) throw error;
     console.warn(`[diarization] segmento lasciato senza etichette: ${error.message}`);
-    return { text: segment, labeled: false, tier: null, state: { ...state, tail: "" } };
+    return { text: segment, labeled: false, ai: null, state: { ...state, tail: "" } };
   }
 }
 
@@ -177,28 +182,38 @@ export function joinDiarizedSegments(segments: Pick<DiarizedSegment, "text" | "l
   return output;
 }
 
-/** Labels a whole transcript, segment after segment, keeping the numbering consistent. */
+/**
+ * Labels a whole transcript with a single gpt-4o-mini call. Only texts too long for one
+ * answer are labeled segment after segment, keeping the numbering consistent.
+ */
 export async function diarizeTranscript(
   openai: OpenAI,
   text: string,
   signal: AbortSignal,
-  onProgress?: (done: number, total: number) => void,
-): Promise<{ text: string; tier: TierInfo | null; unlabeledSegments: number }> {
-  const segments = splitForDiarization(text);
+): Promise<{ text: string; ai: ModelInfo | null; unlabeledSegments: number }> {
+  const trimmed = text.trim();
+  if (trimmed.length <= SINGLE_PASS_MAX_CHARS) {
+    const result = await diarizeSegment(
+      openai,
+      trimmed,
+      INITIAL_DIARIZATION_STATE,
+      signal,
+      SINGLE_PASS_MAX_OUTPUT_TOKENS,
+    );
+    return { text: result.text, ai: result.ai, unlabeledSegments: result.labeled ? 0 : 1 };
+  }
+
   const results: DiarizedSegment[] = [];
   let state = INITIAL_DIARIZATION_STATE;
-  for (const segment of segments) {
+  for (const segment of splitForDiarization(trimmed)) {
     if (signal.aborted) throw new Error("Operazione annullata.");
     const result = await diarizeSegment(openai, segment, state, signal);
     results.push(result);
     state = result.state;
-    onProgress?.(results.length, segments.length);
   }
-  const tier = mergeTierInfo(results.flatMap((result) => (result.tier ? [result.tier] : [])));
-  if (tier) tier.segments = segments.length;
   return {
     text: joinDiarizedSegments(results),
-    tier,
+    ai: mergeModelInfo(results.flatMap((result) => (result.ai ? [result.ai] : []))),
     unlabeledSegments: results.filter((result) => !result.labeled).length,
   };
 }

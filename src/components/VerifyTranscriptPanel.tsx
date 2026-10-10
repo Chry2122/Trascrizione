@@ -15,7 +15,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { FileDropzone } from "@/components/FileDropzone";
-import { TierBadge } from "@/components/TierBadge";
+import { ModelBadge } from "@/components/ModelBadge";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
 import {
   formatBytes,
@@ -403,7 +403,7 @@ export function VerifyTranscriptPanel() {
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <div className="flex flex-1 flex-wrap items-center justify-between gap-2">
             <p>La trascrizione è corretta! Nessun errore rilevato.</p>
-            <TierBadge tier={result.tier} />
+            <ModelBadge ai={result.ai} />
           </div>
         </div>
       )}
@@ -418,9 +418,9 @@ export function VerifyTranscriptPanel() {
                   Discrepanze rilevate
                   {result.errors.length > 0 && ` (${result.errors.length.toLocaleString("it-IT")})`}
                 </h2>
-                <TierBadge
-                  tier={result.tier}
-                  emptyLabel="Nessun LLM (controlli automatici)"
+                <ModelBadge
+                  ai={result.ai}
+                  emptyLabel="Nessun modello AI (controlli automatici)"
                   emptyTitle="Le differenze sono state valutate con controlli automatici, senza modelli di intelligenza artificiale."
                 />
               </div>

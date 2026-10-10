@@ -1,4 +1,4 @@
-import type { TierInfo } from "@/lib/tiered-ai";
+import type { ModelInfo } from "@/lib/ai-model";
 
 export type JobStatus = "queued" | "analyzing" | "transcribing" | "labeling" | "done" | "error";
 
@@ -19,7 +19,7 @@ export type TranscriptionJob = {
   labelSpeakers: boolean;
   labeledSegments: number;
   totalSegments: number;
-  tier: TierInfo | null;
+  ai: ModelInfo | null;
   warning: string | null;
 };
 

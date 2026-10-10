@@ -46,12 +46,12 @@ export async function POST(request: NextRequest) {
   }
 
   if (!rawText) {
-    return NextResponse.json({ text: "", rawText: "", tier: null });
+    return NextResponse.json({ text: "", rawText: "", ai: null });
   }
 
   try {
-    const { text, tier } = await diarizeTranscript(openai, rawText, request.signal);
-    return NextResponse.json({ text, rawText, tier });
+    const { text, ai } = await diarizeTranscript(openai, rawText, request.signal);
+    return NextResponse.json({ text, rawText, ai });
   } catch (error: unknown) {
     return openAIErrorResponse(error, "Riconoscimento dei parlanti fallito");
   }

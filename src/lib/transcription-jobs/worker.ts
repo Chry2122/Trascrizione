@@ -10,7 +10,7 @@ import {
   splitForDiarization,
   type DiarizedSegment,
 } from "@/lib/speaker-diarization";
-import { mergeTierInfo } from "@/lib/tiered-ai";
+import { mergeModelInfo } from "@/lib/ai-model";
 import { analyzeAudio, extractChunk, planChunks, type ChunkPlan } from "@/lib/transcription-jobs/audio";
 import {
   chunkAudioPath,
@@ -229,10 +229,8 @@ async function labelSpeakers(
   }
 
   const unlabeled = results.filter((result) => !result.labeled).length;
-  const tier = mergeTierInfo(results.flatMap((result) => (result.tier ? [result.tier] : [])));
-  if (tier) tier.segments = segments.length;
   await updateJob(job.id, {
-    tier,
+    ai: mergeModelInfo(results.flatMap((result) => (result.ai ? [result.ai] : []))),
     warning:
       unlabeled > 0
         ? `${unlabeled} segmenti su ${segments.length} sono rimasti senza etichette dei parlanti.`

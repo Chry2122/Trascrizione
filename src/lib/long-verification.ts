@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { mergeTierInfo, runTiered, toTierInfo, type TierInfo } from "@/lib/tiered-ai";
+import { runJsonTask, VERIFICATION_MODEL } from "@/lib/ai-model";
 import { diffTokens, tokenize, type Hunk, type Token } from "@/lib/transcript-alignment";
 import {
   describeDifference,
@@ -21,10 +21,8 @@ Classifica OGNI differenza:
 - "equivalente" quando le due forme si leggono ad alta voce allo stesso modo o hanno lo stesso significato: numeri in lettere o in cifre ("tre" / "3"), unità di misura per esteso o abbreviate ("chili" / "kg"), apostrofi, varianti ortografiche, parole spezzate o unite diversamente.
 - "errore" in tutti gli altri casi: parola diversa, testo omesso dall'utente ("fornito" vuoto), testo in più non pronunciato ("audio" vuoto).
 La trascrizione dell'audio è automatica: in caso di dubbio su un singolo suono simile, preferisci "equivalente".
-Campi JSON specifici del compito:
-- "classificazioni": array con un oggetto { "id": numero, "tipo": "equivalente" | "errore" } per OGNI differenza ricevuta, nessuna esclusa.
-- "text": stringa vuota.
-- "unclearWords": le differenze per cui non è chiaro se siano un vero errore.`;
+Rispondi ESCLUSIVAMENTE con un oggetto JSON valido con questo campo:
+- "classificazioni": array con un oggetto { "id": numero, "tipo": "equivalente" | "errore" } per OGNI differenza ricevuta, nessuna esclusa.`;
 
 type Item = { id: number; hunk: Hunk; fornito: string; audio: string };
 
@@ -77,7 +75,7 @@ export type ComparisonProgress = { done: number; total: number };
 
 /**
  * Verifies transcripts of any length: the texts are aligned word by word without AI, and
- * only the differing passages are classified by the tiered model, in batches.
+ * only the differing passages are classified by gpt-4o, in batches.
  */
 export async function verifyLongTranscript(options: {
   openai: OpenAI;
@@ -119,7 +117,6 @@ export async function verifyLongTranscript(options: {
 
   const batches: Item[][] = [];
   for (let i = 0; i < undecided.length; i += BATCH_SIZE) batches.push(undecided.slice(i, i + BATCH_SIZE));
-  const tiers: TierInfo[] = [];
   onProgress({ done: 0, total: batches.length });
 
   for (const [index, batch] of batches.entries()) {
@@ -132,14 +129,15 @@ export async function verifyLongTranscript(options: {
       contestoAudio: contextOf(whisper, whisperTokens, item.hunk.bStart, item.hunk.bEnd),
     }));
     const ids = new Set(batch.map((item) => item.id));
-    const run = await runTiered<Map<number, string>>({
+    const classified = await runJsonTask<Map<number, string>>({
       client: openai,
+      model: VERIFICATION_MODEL,
       signal,
       taskName: "verify-transcript-long",
       instructions: CLASSIFY_INSTRUCTIONS,
       input: `DIFFERENZE DA CLASSIFICARE:\n${JSON.stringify(payload)}`,
       maxOutputTokens: 4096,
-      parseExtra: (record) => {
+      parse: (record) => {
         if (!Array.isArray(record.classificazioni)) return null;
         const result = new Map<number, string>();
         for (const entry of record.classificazioni as unknown[]) {
@@ -150,8 +148,7 @@ export async function verifyLongTranscript(options: {
         return result.size === ids.size ? result : null;
       },
     });
-    run.extra.forEach((tipo, id) => verdicts.set(id, tipo));
-    tiers.push(toTierInfo(run));
+    classified.forEach((tipo, id) => verdicts.set(id, tipo));
     onProgress({ done: index + 1, total: batches.length });
   }
 
@@ -163,13 +160,12 @@ export async function verifyLongTranscript(options: {
     };
     return isRealError(difference);
   });
-  const tier = mergeTierInfo(tiers);
-  if (tier) tier.segments = batches.length;
-  if (errors.length === 0) return { isCorrect: true, tier };
+  const ai = batches.length > 0 ? { model: VERIFICATION_MODEL, calls: batches.length } : null;
+  if (errors.length === 0) return { isCorrect: true, ai };
   return {
     isCorrect: false,
     errors: errors.map((item) => describeDifference({ ...item, tipo: "errore" })),
     correctedTranscript: applyCorrections(provided, providedTokens, errors),
-    tier,
+    ai,
   };
 }

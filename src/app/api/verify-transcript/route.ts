@@ -13,7 +13,7 @@ import {
   missingApiKeyResponse,
 } from "@/lib/openai-server";
 import { storageDir } from "@/lib/temp-storage";
-import { runTiered, TieredAIError, toTierInfo } from "@/lib/tiered-ai";
+import { ModelResponseError, runJsonTask, VERIFICATION_MODEL } from "@/lib/ai-model";
 import {
   describeDifference,
   isRealError,
@@ -44,13 +44,12 @@ Procedura obbligatoria:
 3. La trascrizione reale è generata automaticamente: in caso di dubbio su un singolo suono simile, preferisci "equivalente".
 4. "isCorrect" è true se e solo se nessuna differenza è di tipo "errore".
 5. Se "isCorrect" è false: "errors" contiene una descrizione in italiano per ciascuna differenza di tipo "errore" e MAI per quelle equivalenti; "correctedTranscript" è il testo dell'utente in cui correggi SOLO le differenze di tipo "errore", lasciando le parti equivalenti esattamente come le ha scritte l'utente.
-6. "text" è uguale a "correctedTranscript" se "isCorrect" è false, altrimenti è la trascrizione fornita dall'utente invariata.
-7. "unclearWords" elenca le parole della trascrizione reale che Whisper potrebbe aver frainteso o per cui non è chiaro se la differenza sia un vero errore; "confidenceScore" indica quanto sei sicuro della classificazione delle differenze.
+Rispondi ESCLUSIVAMENTE con un oggetto JSON valido.
 
 Esempio
 Trascrizione fornita: "Ho comprato due chili di pere"
 Trascrizione reale: "Ho comprato 2 kg di mele."
-Risposta: {"differences":[{"fornito":"due","audio":"2","tipo":"equivalente"},{"fornito":"chili","audio":"kg","tipo":"equivalente"},{"fornito":"pere","audio":"mele","tipo":"errore"}],"isCorrect":false,"errors":["\\"pere\\" non corrisponde all'audio: è stato detto \\"mele\\"."],"correctedTranscript":"Ho comprato due chili di mele","text":"Ho comprato due chili di mele","confidenceScore":95,"unclearWords":[],"needsEscalation":false}`;
+Risposta: {"differences":[{"fornito":"due","audio":"2","tipo":"equivalente"},{"fornito":"chili","audio":"kg","tipo":"equivalente"},{"fornito":"pere","audio":"mele","tipo":"errore"}],"isCorrect":false,"errors":["\\"pere\\" non corrisponde all'audio: è stato detto \\"mele\\"."],"correctedTranscript":"Ho comprato due chili di mele"}`;
 
 function readDifferences(value: unknown): Difference[] | null {
   if (!Array.isArray(value)) return null;
@@ -136,16 +135,17 @@ async function verifyShortTranscript(
   whisperTranscript: string,
   signal: AbortSignal,
 ): Promise<VerifyTranscriptResult> {
-  const run = await runTiered<VerificationOutcome>({
+  const outcome = await runJsonTask<VerificationOutcome>({
     client: openai,
+    model: VERIFICATION_MODEL,
     taskName: "verify-transcript",
     instructions: SYSTEM_PROMPT,
     input: buildUserMessage(providedTranscript, whisperTranscript),
-    parseExtra: (record) => parseVerification(record, whisperTranscript),
+    parse: (record) => parseVerification(record, whisperTranscript),
     maxOutputTokens: 8192,
     signal,
   });
-  return { ...run.extra, tier: toTierInfo(run) };
+  return { ...outcome, ai: { model: VERIFICATION_MODEL, calls: 1 } };
 }
 
 async function loadUpload(uploadId: string) {
@@ -163,7 +163,7 @@ async function loadUpload(uploadId: string) {
 }
 
 function describeError(error: unknown): string {
-  if (error instanceof TieredAIError) {
+  if (error instanceof ModelResponseError) {
     console.error(`[verify-transcript] ${error.message}`);
     return "Il modello ha restituito una risposta non valida. Riprova.";
   }
@@ -242,7 +242,7 @@ export async function POST(request: NextRequest) {
 
       let result: VerifyTranscriptResult;
       if (normalizeForComparison(providedTranscript) === normalizeForComparison(whisperTranscript)) {
-        result = { isCorrect: true, tier: null };
+        result = { isCorrect: true, ai: null };
       } else if (providedTranscript.length + whisperTranscript.length <= SHORT_TEXT_MAX_CHARS) {
         send({ type: "progress", stage: "comparing", done: 0, total: 1 });
         result = await verifyShortTranscript(openai, providedTranscript, whisperTranscript, signal);

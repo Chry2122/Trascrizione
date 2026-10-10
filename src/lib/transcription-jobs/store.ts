@@ -70,7 +70,7 @@ export function toPublicJob(job: StoredJob): TranscriptionJob {
     labelSpeakers: job.labelSpeakers ?? false,
     labeledSegments: job.labeledSegments ?? 0,
     totalSegments: job.totalSegments ?? 0,
-    tier: job.tier ?? null,
+    ai: job.ai ?? null,
     warning: job.warning ?? null,
   };
 }
@@ -148,7 +148,7 @@ export async function createJob(input: {
     error: null,
     labeledSegments: 0,
     totalSegments: 0,
-    tier: null,
+    ai: null,
     warning: null,
     chunks: null,
   };

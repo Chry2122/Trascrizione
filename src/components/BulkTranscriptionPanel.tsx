@@ -18,7 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { FileDropzone } from "@/components/FileDropzone";
 import { SpeakerManager } from "@/components/SpeakerManager";
-import { TierBadge } from "@/components/TierBadge";
+import { ModelBadge } from "@/components/ModelBadge";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
 import { formatBytes, LONG_TRANSCRIBE_FORMATS, validateMediaFile } from "@/lib/media-validation";
 import {
@@ -588,8 +588,8 @@ export function BulkTranscriptionPanel() {
 
                   {job.status === "done" && job.labelSpeakers && (
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <TierBadge
-                        tier={job.tier}
+                      <ModelBadge
+                        ai={job.ai}
                         emptyLabel="Parlanti non riconosciuti"
                         emptyTitle="Il modello non ha restituito un risultato utilizzabile: il testo è quello di Whisper."
                       />
