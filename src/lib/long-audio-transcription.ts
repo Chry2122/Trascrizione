@@ -2,6 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type OpenAI from "openai";
 import { toFile } from "openai";
+import { TRANSCRIPTION_MODEL } from "@/lib/ai-model";
 import { analyzeAudio, extractChunk, planChunks } from "@/lib/transcription-jobs/audio";
 import { STYLE_PROMPTS } from "@/lib/transcription-jobs/style-prompts";
 
@@ -62,7 +63,7 @@ export async function transcribeAudioFile(options: {
         const result = await openai.audio.transcriptions.create(
           {
             file,
-            model: "whisper-1",
+            model: TRANSCRIPTION_MODEL,
             ...(language ? { language } : {}),
             ...(prompt ? { prompt } : {}),
           },

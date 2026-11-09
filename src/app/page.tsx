@@ -12,7 +12,7 @@ const TABS = [
     id: "transcription",
     label: "Trascrizione",
     description:
-      "Trascrivi uno o più file audio o video con OpenAI Whisper, anche registrazioni di molte ore.",
+      "Trascrivi uno o più file audio o video con OpenAI, anche registrazioni di molte ore.",
     icon: FileText,
     Panel: BulkTranscriptionPanel,
   },
@@ -52,7 +52,7 @@ export default function Home() {
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-10 sm:px-6">
       <header className="space-y-2 text-center sm:text-left">
         <p className="text-sm font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-          OpenAI Whisper · ffmpeg
+          OpenAI · ffmpeg
         </p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Trascrizione e Pulizia Audio

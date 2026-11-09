@@ -690,7 +690,7 @@ export function BulkTranscriptionPanel() {
                       <ModelBadge
                         ai={job.ai}
                         emptyLabel="Parlanti non riconosciuti"
-                        emptyTitle="Il modello non ha restituito un risultato utilizzabile: il testo è quello di Whisper."
+                        emptyTitle="Il modello non ha restituito un risultato utilizzabile: il testo è quello della trascrizione originale."
                       />
                       {job.warning && (
                         <span className="text-amber-700 dark:text-amber-300">{job.warning}</span>

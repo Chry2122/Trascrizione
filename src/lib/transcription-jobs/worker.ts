@@ -10,7 +10,7 @@ import {
   splitForDiarization,
   type DiarizedSegment,
 } from "@/lib/speaker-diarization";
-import { mergeModelInfo } from "@/lib/ai-model";
+import { mergeModelInfo, TRANSCRIPTION_MODEL } from "@/lib/ai-model";
 import { analyzeAudio, extractChunk, planChunks, type ChunkPlan } from "@/lib/transcription-jobs/audio";
 import {
   chunkAudioPath,
@@ -259,7 +259,7 @@ async function transcribeChunk(
     const result = await openai.audio.transcriptions.create(
       {
         file,
-        model: "whisper-1",
+        model: TRANSCRIPTION_MODEL,
         ...(job.language ? { language: job.language } : {}),
         ...(prompt ? { prompt } : {}),
       },

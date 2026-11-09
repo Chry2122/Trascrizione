@@ -1,6 +1,22 @@
 import type OpenAI from "openai";
 
-/** Speaker labelling after Whisper: fast and cheap, meant for volume. */
+const TRANSCRIPTION_MODELS = ["gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"] as const;
+const DEFAULT_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
+
+function readTranscriptionModel(): string {
+  const configured = process.env.TRANSCRIPTION_MODEL?.trim();
+  if (!configured) return DEFAULT_TRANSCRIPTION_MODEL;
+  if ((TRANSCRIPTION_MODELS as readonly string[]).includes(configured)) return configured;
+  console.warn(
+    `[ai] TRANSCRIPTION_MODEL="${configured}" non supportato (${TRANSCRIPTION_MODELS.join(", ")}): uso ${DEFAULT_TRANSCRIPTION_MODEL}.`,
+  );
+  return DEFAULT_TRANSCRIPTION_MODEL;
+}
+
+/** Speech-to-text model, server only. Set TRANSCRIPTION_MODEL=whisper-1 to switch back. */
+export const TRANSCRIPTION_MODEL = readTranscriptionModel();
+
+/** Speaker labelling after the transcription: fast and cheap, meant for volume. */
 export const DIARIZATION_MODEL = "gpt-4o-mini";
 /** Comparison between the audio (Whisper) and the transcript provided by the user. */
 export const VERIFICATION_MODEL = "gpt-4o";

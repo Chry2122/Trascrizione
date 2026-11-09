@@ -10,3 +10,6 @@ services:
     envVars:
       - key: OPENAI_API_KEY
         sync: false
+      # gpt-4o-mini-transcribe (default, cheaper), gpt-4o-transcribe or whisper-1.
+      - key: TRANSCRIPTION_MODEL
+        value: gpt-4o-mini-transcribe

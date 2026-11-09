@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { TRANSCRIPTION_MODEL } from "@/lib/ai-model";
 import { TRANSCRIBE_FORMATS, validateMediaFile } from "@/lib/media-validation";
 import {
   createOpenAIClient,
@@ -53,7 +54,7 @@ async function transcribe(request: NextRequest) {
   let rawText: string;
   try {
     const transcription = await openai.audio.transcriptions.create(
-      { file: fileEntry, model: "whisper-1" },
+      { file: fileEntry, model: TRANSCRIPTION_MODEL },
       { signal: request.signal },
     );
     rawText = (transcription.text ?? "").trim();

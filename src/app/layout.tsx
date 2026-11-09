@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Trascrizione e Pulizia Audio",
-  description: "Trascrivi file audio e video con OpenAI Whisper e rimuovi il rumore di fondo.",
+  description: "Trascrivi file audio e video con OpenAI e rimuovi il rumore di fondo.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
