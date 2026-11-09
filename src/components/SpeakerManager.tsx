@@ -13,7 +13,31 @@ type SpeakerManagerProps = {
   text: string;
   onTextChange: (next: string) => void;
   disabled?: boolean;
+  /** Estimated start, in seconds, of the first turn of each label. */
+  firstTimes?: Record<string, number> | null;
 };
+
+const PREVIEW_CHARS = 90;
+
+function formatTimestamp(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = String(seconds % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+/** Opening words of the first turn of each label, to confirm it is the right person. */
+function firstTurnPreviews(text: string, labels: readonly string[]): Record<string, string> {
+  const previews: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const label = labels.find((item) => !previews[item] && line.startsWith(`${item}:`));
+    if (!label) continue;
+    const content = line.slice(label.length + 1).trim();
+    previews[label] = content.length > PREVIEW_CHARS ? `${content.slice(0, PREVIEW_CHARS)}…` : content;
+  }
+  return previews;
+}
 
 type LastReplacement = {
   original: string;
@@ -24,6 +48,7 @@ export function SpeakerManager({
   text,
   onTextChange,
   disabled = false,
+  firstTimes = null,
 }: SpeakerManagerProps) {
   const baseId = useId();
   const [names, setNames] = useState<Record<string, string>>({});
@@ -32,6 +57,7 @@ export function SpeakerManager({
 
   const labels = useMemo(() => extractSpeakerLabels(text), [text]);
   const turns = useMemo(() => countSpeakerTurns(text), [text]);
+  const previews = useMemo(() => firstTurnPreviews(text, labels), [text, labels]);
 
   const activeNames = useMemo(() => {
     const result: Record<string, string> = {};
@@ -95,6 +121,8 @@ export function SpeakerManager({
             {labels.map((label, index) => {
               const inputId = `${baseId}-speaker-${index}`;
               const count = turns[label] ?? 0;
+              const firstTime = firstTimes?.[label];
+              const preview = previews[label];
               return (
                 <div
                   key={label}
@@ -109,6 +137,22 @@ export function SpeakerManager({
                       {count === 1 ? "1 intervento" : `${count} interventi`}
                     </span>
                   </label>
+                  {(firstTime !== undefined || preview) && (
+                    <p className="space-y-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                      {firstTime !== undefined && (
+                        <span
+                          className="block"
+                          title="Stima calcolata dalla posizione nel testo: se non lo senti subito, parti qualche secondo prima."
+                        >
+                          Primo intervento: circa{" "}
+                          <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300">
+                            {formatTimestamp(firstTime)}
+                          </span>
+                        </span>
+                      )}
+                      {preview && <span className="block italic">&ldquo;{preview}&rdquo;</span>}
+                    </p>
+                  )}
                   <input
                     id={inputId}
                     type="text"

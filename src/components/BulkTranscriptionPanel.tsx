@@ -712,6 +712,7 @@ export function BulkTranscriptionPanel() {
                       <SpeakerManager
                         key={job.id}
                         text={previews[job.id]}
+                        firstTimes={job.speakerTimes}
                         onTextChange={(next) =>
                           setPreviews((current) => ({ ...current, [job.id]: next }))
                         }

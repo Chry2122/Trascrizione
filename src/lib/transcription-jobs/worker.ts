@@ -3,6 +3,7 @@ import path from "node:path";
 import { AuthenticationError, toFile } from "openai";
 import { FFMPEG_MISSING_MESSAGE, resolveFfmpegPath } from "@/lib/ffmpeg-binary";
 import { createOpenAIClient } from "@/lib/openai-server";
+import { buildTimeline, firstSpeakerTimes } from "@/lib/speaker-timestamps";
 import {
   diarizeSegment,
   INITIAL_DIARIZATION_STATE,
@@ -145,14 +146,20 @@ async function processJob(id: string): Promise<void> {
     const texts = await Promise.all(
       chunks.map((chunk) => readFile(chunkTextPath(id, chunk.index), "utf8")),
     );
-    const rawTranscript = texts.map((text) => text.trim()).filter(Boolean).join("\n\n");
+    const timeline = buildTimeline(chunks, texts, getJob(id)?.silences ?? []);
+    const rawTranscript = timeline.text;
     await writeFile(rawTranscriptPath(id), rawTranscript, "utf8");
     const transcript =
       job.labelSpeakers && rawTranscript
         ? await labelSpeakers(job, rawTranscript, openai, controller.signal)
         : rawTranscript;
     await writeFile(transcriptPath(id), transcript, "utf8");
-    await updateJob(id, { status: "done", error: null });
+    const speakerTimes = job.labelSpeakers ? firstSpeakerTimes(timeline, transcript) : {};
+    await updateJob(id, {
+      status: "done",
+      error: null,
+      speakerTimes: Object.keys(speakerTimes).length > 0 ? speakerTimes : null,
+    });
     await Promise.all([
       rm(sourcePath(job), { force: true }),
       rm(path.join(jobDir(id), "chunks"), { recursive: true, force: true }),
@@ -189,6 +196,7 @@ async function analyze(job: StoredJob, ffmpegPath: string, signal: AbortSignal) 
   await updateJob(job.id, {
     durationSec,
     chunks,
+    silences,
     totalChunks: chunks.length,
     analysisProgress: 1,
   });

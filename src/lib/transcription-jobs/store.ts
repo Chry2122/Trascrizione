@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { TMP_ROOT } from "@/lib/tmp-root";
-import type { ChunkPlan } from "@/lib/transcription-jobs/audio";
+import type { ChunkPlan, Silence } from "@/lib/transcription-jobs/audio";
 import { ACTIVE_STATUSES, type TranscriptionJob } from "@/lib/transcription-jobs/types";
 
 export type StoredJob = TranscriptionJob & {
   sourceExtension: string;
   chunks: ChunkPlan[] | null;
+  /** Pauses found by the analysis, used to place the speaker turns in time. */
+  silences?: Silence[];
 };
 
 type StoreState = {
@@ -72,6 +74,7 @@ export function toPublicJob(job: StoredJob): TranscriptionJob {
     totalSegments: job.totalSegments ?? 0,
     ai: job.ai ?? null,
     warning: job.warning ?? null,
+    speakerTimes: job.speakerTimes ?? null,
   };
 }
 
@@ -150,6 +153,7 @@ export async function createJob(input: {
     totalSegments: 0,
     ai: null,
     warning: null,
+    speakerTimes: null,
     chunks: null,
   };
   state.jobs.set(job.id, job);

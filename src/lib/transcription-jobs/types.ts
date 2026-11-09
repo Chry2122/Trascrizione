@@ -21,6 +21,8 @@ export type TranscriptionJob = {
   totalSegments: number;
   ai: ModelInfo | null;
   warning: string | null;
+  /** Estimated start, in seconds, of the first turn of each speaker ("Voce 1" → 754). */
+  speakerTimes: Record<string, number> | null;
 };
 
 export const ACTIVE_STATUSES: readonly JobStatus[] = ["queued", "analyzing", "transcribing", "labeling"];
