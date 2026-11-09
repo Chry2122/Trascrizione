@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { runJsonTask, VERIFICATION_MODEL } from "@/lib/ai-model";
+import { speakerLabelRanges, tokenizeSpokenWords } from "@/lib/speakers";
 import { diffTokens, tokenize, type Hunk, type Token } from "@/lib/transcript-alignment";
 import {
   describeDifference,
@@ -69,6 +70,38 @@ function applyCorrections(provided: string, tokens: Token[], errors: Item[]): st
   return output + provided.slice(cursor);
 }
 
+/** Token indices where a speaker turn starts (the first word after each label). */
+function turnBoundaries(text: string, tokens: Token[]): number[] {
+  const boundaries: number[] = [];
+  let index = 0;
+  for (const range of speakerLabelRanges(text)) {
+    while (index < tokens.length && tokens[index].start < range.end) index += 1;
+    if (index > 0 && index < tokens.length) boundaries.push(index);
+  }
+  return boundaries;
+}
+
+/**
+ * Splits differences that span two speaker turns at the turn boundary, so a correction never
+ * covers a label. The audio side is split in proportion to the words on each side.
+ */
+function splitAtTurns(hunks: Hunk[], boundaries: number[]): Hunk[] {
+  if (boundaries.length === 0) return hunks;
+  const result: Hunk[] = [];
+  for (const hunk of hunks) {
+    let current = hunk;
+    for (const boundary of boundaries) {
+      if (boundary <= current.aStart || boundary >= current.aEnd) continue;
+      const share = (boundary - current.aStart) / (current.aEnd - current.aStart);
+      const bSplit = current.bStart + Math.round(share * (current.bEnd - current.bStart));
+      result.push({ aStart: current.aStart, aEnd: boundary, bStart: current.bStart, bEnd: bSplit });
+      current = { aStart: boundary, aEnd: current.aEnd, bStart: bSplit, bEnd: current.bEnd };
+    }
+    result.push(current);
+  }
+  return result;
+}
+
 export class TranscriptMismatchError extends Error {}
 
 export type ComparisonProgress = { done: number; total: number };
@@ -85,11 +118,16 @@ export async function verifyLongTranscript(options: {
   onProgress: (progress: ComparisonProgress) => void;
 }): Promise<VerifyTranscriptResult> {
   const { openai, provided, whisper, signal, onProgress } = options;
-  const providedTokens = tokenize(provided);
+  // Speaker labels ("Sindaco: ") are not spoken: they are left out of the comparison, so
+  // they are never reported as errors nor removed by the corrections.
+  const providedTokens = tokenizeSpokenWords(provided);
   const whisperTokens = tokenize(whisper);
-  const hunks = diffTokens(
-    providedTokens.map((token) => token.norm),
-    whisperTokens.map((token) => token.norm),
+  const hunks = splitAtTurns(
+    diffTokens(
+      providedTokens.map((token) => token.norm),
+      whisperTokens.map((token) => token.norm),
+    ),
+    turnBoundaries(provided, providedTokens),
   );
 
   const changed = hunks.reduce((total, hunk) => total + (hunk.aEnd - hunk.aStart), 0);

@@ -3,6 +3,7 @@ import path from "node:path";
 import type OpenAI from "openai";
 import { toFile } from "openai";
 import { TRANSCRIPTION_MODEL } from "@/lib/ai-model";
+import { buildTimeline, type TranscriptTimeline } from "@/lib/speaker-timestamps";
 import { analyzeAudio, extractChunk, planChunks } from "@/lib/transcription-jobs/audio";
 import { STYLE_PROMPTS } from "@/lib/transcription-jobs/style-prompts";
 
@@ -26,7 +27,7 @@ export async function transcribeAudioFile(options: {
   language: string | null;
   signal: AbortSignal;
   onProgress: (progress: TranscriptionProgress) => void;
-}): Promise<string> {
+}): Promise<TranscriptTimeline> {
   const { openai, ffmpegPath, inputPath, workDir, language, signal, onProgress } = options;
 
   let lastRatio = 0;
@@ -88,5 +89,5 @@ export async function transcribeAudioFile(options: {
   }
   if (signal.aborted) throw new Error("Operazione annullata.");
   if (failure !== null) throw failure;
-  return texts.filter(Boolean).join("\n\n");
+  return buildTimeline(chunks, texts, silences);
 }

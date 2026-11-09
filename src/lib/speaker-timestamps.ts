@@ -1,13 +1,13 @@
+import { findSpeakerTurns, tokenizeSpokenWords } from "@/lib/speakers";
 import type { ChunkPlan, Silence } from "@/lib/transcription-jobs/audio";
 import { diffTokens, tokenize, type Hunk } from "@/lib/transcript-alignment";
 
 const CHUNK_SEPARATOR = "\n\n";
-const LABEL_LINE = /^Voce (\d+): /gm;
 
 type Interval = { start: number; end: number };
 
 /** Where a chunk's text sits in the joined transcript and when its speech happens. */
-type TimelineSpan = { charStart: number; charEnd: number; speech: Interval[]; speechSec: number };
+export type TimelineSpan = { charStart: number; charEnd: number; speech: Interval[]; speechSec: number };
 
 export type TranscriptTimeline = { text: string; spans: TimelineSpan[] };
 
@@ -81,30 +81,22 @@ function mapTokenIndex(hunks: readonly Hunk[], index: number): number {
 }
 
 /**
- * Estimated time (seconds) of the first turn of each speaker ("Voce N") in the labeled
- * transcript. The labeled text is aligned word by word with the raw one, because labelling
- * may have fixed a few words and always adds the labels and line breaks.
+ * Estimated time (seconds) of the first turn of each speaker ("Voce 1", "Sindaco", ...) in a
+ * labeled transcript. Its words are aligned with the timeline text, because the labeled text
+ * may differ from it in a few words (fixes, a transcript written by someone else) and always
+ * adds the labels and line breaks.
  */
 export function firstSpeakerTimes(
   timeline: TranscriptTimeline,
   labeled: string,
 ): Record<string, number> {
   const firstTurns = new Map<string, number>();
-  const labelRanges: Interval[] = [];
-  for (const match of labeled.matchAll(LABEL_LINE)) {
-    const start = match.index;
-    const end = start + match[0].length;
-    labelRanges.push({ start, end });
-    const label = `Voce ${Number(match[1])}`;
-    if (!firstTurns.has(label)) firstTurns.set(label, end);
+  for (const turn of findSpeakerTurns(labeled)) {
+    if (!firstTurns.has(turn.label)) firstTurns.set(turn.label, turn.contentStart);
   }
   if (firstTurns.size === 0) return {};
 
-  let range = 0;
-  const labeledTokens = tokenize(labeled).filter((token) => {
-    while (range < labelRanges.length && labelRanges[range].end <= token.start) range += 1;
-    return !(range < labelRanges.length && token.start >= labelRanges[range].start);
-  });
+  const labeledTokens = tokenizeSpokenWords(labeled);
   const rawTokens = tokenize(timeline.text);
   if (rawTokens.length === 0) return {};
   const hunks = diffTokens(

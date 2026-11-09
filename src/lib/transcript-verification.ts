@@ -4,8 +4,14 @@ export type VerificationOutcome =
   | { isCorrect: true }
   | { isCorrect: false; errors: string[]; correctedTranscript: string };
 
-/** `ai` is null when no model was needed (the texts already matched after normalization). */
-export type VerifyTranscriptResult = VerificationOutcome & { ai: ModelInfo | null };
+/**
+ * `ai` is null when no model was needed (the texts already matched after normalization).
+ * `speakerTimes` is the estimated start, in seconds, of the first turn of each speaker label.
+ */
+export type VerifyTranscriptResult = VerificationOutcome & {
+  ai: ModelInfo | null;
+  speakerTimes?: Record<string, number> | null;
+};
 
 export type VerifyRequestBody = {
   uploadId: string;

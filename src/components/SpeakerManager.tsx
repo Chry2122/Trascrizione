@@ -42,6 +42,7 @@ function firstTurnPreviews(text: string, labels: readonly string[]): Record<stri
 type LastReplacement = {
   original: string;
   replaced: string;
+  aliases: Record<string, string>;
 };
 
 export function SpeakerManager({
@@ -54,6 +55,8 @@ export function SpeakerManager({
   const [names, setNames] = useState<Record<string, string>>({});
   const [lastReplacement, setLastReplacement] =
     useState<LastReplacement | null>(null);
+  // Current label → label under which `firstTimes` knows it, so a renamed speaker keeps its time.
+  const [aliases, setAliases] = useState<Record<string, string>>({});
 
   const labels = useMemo(() => extractSpeakerLabels(text), [text]);
   const turns = useMemo(() => countSpeakerTurns(text), [text]);
@@ -74,13 +77,21 @@ export function SpeakerManager({
     if (!canReplace) return;
     const replaced = replaceSpeakerLabels(text, activeNames);
     if (replaced === text) return;
-    setLastReplacement({ original: text, replaced });
+    const nextAliases = { ...aliases };
+    for (const [label, name] of Object.entries(activeNames)) {
+      const trimmed = name.trim();
+      if (trimmed) nextAliases[trimmed] = aliases[label] ?? label;
+    }
+    setLastReplacement({ original: text, replaced, aliases });
+    setAliases(nextAliases);
+    setNames({});
     onTextChange(replaced);
   }
 
   function handleUndo() {
     if (!canUndo || !lastReplacement) return;
     setLastReplacement(null);
+    setAliases(lastReplacement.aliases);
     onTextChange(lastReplacement.original);
   }
 
@@ -103,7 +114,7 @@ export function SpeakerManager({
           </h3>
           <p className="text-zinc-600 dark:text-zinc-400">
             {labels.length > 0
-              ? "Assegna un nome a ciascuna voce rilevata e premi \u201CSostituisci\u201D per aggiornare la trascrizione. Le voci lasciate vuote restano invariate."
+              ? "Assegna un nome a ciascuna voce rilevata e premi \u201CSostituisci\u201D per aggiornare la trascrizione. Le voci lasciate vuote restano invariate; puoi rinominare anche un nome già assegnato, se è sbagliato."
               : "Sostituzione completata. Puoi annullarla per ripristinare le etichette originali."}
           </p>
         </div>
@@ -121,7 +132,7 @@ export function SpeakerManager({
             {labels.map((label, index) => {
               const inputId = `${baseId}-speaker-${index}`;
               const count = turns[label] ?? 0;
-              const firstTime = firstTimes?.[label];
+              const firstTime = firstTimes?.[label] ?? firstTimes?.[aliases[label] ?? label];
               const preview = previews[label];
               return (
                 <div
@@ -161,7 +172,7 @@ export function SpeakerManager({
                       const value = event.target.value;
                       setNames((prev) => ({ ...prev, [label]: value }));
                     }}
-                    placeholder="Nome del parlante"
+                    placeholder={label.startsWith("Voce ") ? "Nome del parlante" : "Nuovo nome (per correggerlo)"}
                     disabled={disabled}
                     autoComplete="off"
                     className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"

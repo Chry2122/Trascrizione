@@ -17,10 +17,12 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { EstimatedProgress } from "@/components/EstimatedProgress";
 import { FileDropzone } from "@/components/FileDropzone";
 import { ModelBadge } from "@/components/ModelBadge";
+import { SpeakerManager } from "@/components/SpeakerManager";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
 import { readMediaDuration } from "@/lib/audio-duration";
 import { describeRequestError } from "@/lib/fetch-json";
 import { estimateVerifyProgress, type VerifyStage } from "@/lib/processing-estimate";
+import { findSpeakerTurns } from "@/lib/speakers";
 import {
   formatBytes,
   HOSTING_TOO_LARGE_MESSAGE,
@@ -264,6 +266,16 @@ export function VerifyTranscriptPanel() {
   };
 
   const correctedTranscript = result && !result.isCorrect ? result.correctedTranscript : "";
+  // Speaker names are edited on the corrected text once there is one, otherwise on the input.
+  // Renaming labels does not change the spoken words, so the verification result stays valid.
+  const speakerText = correctedTranscript || providedTranscript;
+  const onSpeakerTextChange = (next: string) => {
+    if (correctedTranscript) {
+      setResult((current) => (current && !current.isCorrect ? { ...current, correctedTranscript: next } : current));
+    } else {
+      setProvidedTranscript(next);
+    }
+  };
 
   const copyCorrected = async () => {
     if (!correctedTranscript) return;
@@ -501,6 +513,20 @@ export function VerifyTranscriptPanel() {
             />
           </div>
         </section>
+      )}
+
+      {speakerText && (
+        <SpeakerManager
+          text={speakerText}
+          onTextChange={onSpeakerTextChange}
+          firstTimes={result?.speakerTimes}
+          disabled={isBusy}
+        />
+      )}
+      {speakerText && !result && findSpeakerTurns(speakerText).length > 0 && (
+        <p className="text-xs text-zinc-500">
+          Il momento del primo intervento di ogni voce compare dopo la verifica.
+        </p>
       )}
     </div>
   );

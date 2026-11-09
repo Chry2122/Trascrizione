@@ -12,6 +12,8 @@ import {
   describeOpenAIError,
   missingApiKeyResponse,
 } from "@/lib/openai-server";
+import { findSpeakerTurns, stripSpeakerLabels } from "@/lib/speakers";
+import { firstSpeakerTimes, type TranscriptTimeline } from "@/lib/speaker-timestamps";
 import { storageDir } from "@/lib/temp-storage";
 import { ModelResponseError, runJsonTask, VERIFICATION_MODEL } from "@/lib/ai-model";
 import {
@@ -214,13 +216,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const cachePath = path.join(upload.dir, `whisper-${language || "auto"}.txt`);
+  const cachePath = path.join(upload.dir, `transcript-${language || "auto"}.json`);
   return ndjsonResponse<VerifyStreamEvent>(
     request,
     async (send, signal) => {
-      let whisperTranscript = await readFile(cachePath, "utf8").catch(() => null);
-      if (whisperTranscript === null) {
-        whisperTranscript = await transcribeAudioFile({
+      let timeline = await readFile(cachePath, "utf8").then(
+        (raw) => JSON.parse(raw) as TranscriptTimeline,
+        () => null,
+      );
+      if (timeline === null) {
+        timeline = await transcribeAudioFile({
           openai,
           ffmpegPath: ffmpeg.path,
           inputPath: upload.sourcePath,
@@ -229,21 +234,35 @@ export async function POST(request: NextRequest) {
           signal,
           onProgress: (progress) => send({ type: "progress", ...progress }),
         });
-        await writeFile(cachePath, whisperTranscript, "utf8");
+        await writeFile(cachePath, JSON.stringify(timeline), "utf8");
       } else {
         console.log(`[verify-transcript] uso la trascrizione già fatta di "${upload.meta.fileName}"`);
       }
+      const whisperTranscript = timeline.text;
 
       if (!whisperTranscript.trim()) {
         throw new TranscriptMismatchError(
-          "Whisper non ha rilevato parlato nell'audio: impossibile verificare.",
+          "Nell'audio non è stato rilevato parlato: impossibile verificare.",
         );
       }
 
+      const hasSpeakers = findSpeakerTurns(providedTranscript).length > 0;
+      const speakerTimes = hasSpeakers ? firstSpeakerTimes(timeline, providedTranscript) : {};
+      const withSpeakers = (verification: VerifyTranscriptResult): VerifyTranscriptResult => ({
+        ...verification,
+        speakerTimes: Object.keys(speakerTimes).length > 0 ? speakerTimes : null,
+      });
+
       let result: VerifyTranscriptResult;
-      if (normalizeForComparison(providedTranscript) === normalizeForComparison(whisperTranscript)) {
+      if (
+        normalizeForComparison(stripSpeakerLabels(providedTranscript)) ===
+        normalizeForComparison(whisperTranscript)
+      ) {
         result = { isCorrect: true, ai: null };
-      } else if (providedTranscript.length + whisperTranscript.length <= SHORT_TEXT_MAX_CHARS) {
+      } else if (
+        !hasSpeakers &&
+        providedTranscript.length + whisperTranscript.length <= SHORT_TEXT_MAX_CHARS
+      ) {
         send({ type: "progress", stage: "comparing", done: 0, total: 1 });
         result = await verifyShortTranscript(openai, providedTranscript, whisperTranscript, signal);
       } else {
@@ -255,7 +274,7 @@ export async function POST(request: NextRequest) {
           onProgress: (progress) => send({ type: "progress", stage: "comparing", ...progress }),
         });
       }
-      send({ type: "result", result });
+      send({ type: "result", result: withSpeakers(result) });
     },
     describeError,
   );
