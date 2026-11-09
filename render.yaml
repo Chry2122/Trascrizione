@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: app-trascrizione
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Free plan: no persistent disk, so uploads and transcripts are lost on every restart or
+    # deploy, and the service sleeps after 15 minutes without requests.
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false

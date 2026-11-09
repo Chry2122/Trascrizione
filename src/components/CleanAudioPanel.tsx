@@ -11,7 +11,12 @@ import {
   type CleanResult,
   type CleanStreamEvent,
 } from "@/lib/clean-audio";
-import { CLEAN_FORMATS, formatBytes, validateMediaFile } from "@/lib/media-validation";
+import {
+  CLEAN_FORMATS,
+  formatBytes,
+  HOSTING_TOO_LARGE_MESSAGE,
+  validateMediaFile,
+} from "@/lib/media-validation";
 import { createNdjsonParser } from "@/lib/ndjson-client";
 
 // Above this size a WAV result becomes unwieldy (7 h of stereo WAV is about 4.4 GB).
@@ -138,7 +143,10 @@ export function CleanAudioPanel() {
         parse(`${xhr.responseText.slice(received)}\n`);
         if (!finished) setError("L'elaborazione si è interrotta senza risultato. Riprova.");
       } else {
-        let message = `Errore durante la pulizia dell'audio (HTTP ${xhr.status}).`;
+        let message =
+          xhr.status === 413
+            ? HOSTING_TOO_LARGE_MESSAGE
+            : `Errore durante la pulizia dell'audio (HTTP ${xhr.status}).`;
         try {
           message = (JSON.parse(xhr.responseText) as { error?: string }).error ?? message;
         } catch {

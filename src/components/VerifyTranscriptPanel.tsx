@@ -23,6 +23,7 @@ import { describeRequestError } from "@/lib/fetch-json";
 import { estimateVerifyProgress, type VerifyStage } from "@/lib/processing-estimate";
 import {
   formatBytes,
+  HOSTING_TOO_LARGE_MESSAGE,
   MAX_TRANSCRIPT_CHARS,
   validateMediaFile,
   VERIFY_FORMATS,
@@ -93,7 +94,9 @@ function uploadAudio(
         // Non-JSON error page.
       }
       if (xhr.status === 201 && data.uploadId) resolve(data.uploadId);
-      else reject(new Error(data.error ?? `Caricamento fallito (HTTP ${xhr.status}).`));
+      else if (data.error) reject(new Error(data.error));
+      else if (xhr.status === 413) reject(new Error(HOSTING_TOO_LARGE_MESSAGE));
+      else reject(new Error(`Caricamento fallito (HTTP ${xhr.status}).`));
     };
     xhr.onerror = () => reject(new Error("Connessione al server interrotta durante il caricamento."));
     xhr.onabort = () => reject(new DOMException("Caricamento annullato.", "AbortError"));

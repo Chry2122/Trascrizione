@@ -24,7 +24,12 @@ import { readMediaDuration } from "@/lib/audio-duration";
 import { estimateJobProgress } from "@/lib/processing-estimate";
 import { baseNameOf, downloadTextFile } from "@/lib/download";
 import { describeRequestError, fetchJson, HttpError } from "@/lib/fetch-json";
-import { formatBytes, LONG_TRANSCRIBE_FORMATS, validateMediaFile } from "@/lib/media-validation";
+import {
+  formatBytes,
+  HOSTING_TOO_LARGE_MESSAGE,
+  LONG_TRANSCRIBE_FORMATS,
+  validateMediaFile,
+} from "@/lib/media-validation";
 import {
   ACTIVE_STATUSES,
   LANGUAGE_OPTIONS,
@@ -86,7 +91,7 @@ function uploadFile(
       }
       if (xhr.status >= 200 && xhr.status < 300 && data.job) resolve(data.job);
       else if (data.error) reject(new Error(data.error));
-      else if (xhr.status === 413) reject(new Error("Il server ha rifiutato il file perché troppo grande."));
+      else if (xhr.status === 413) reject(new Error(HOSTING_TOO_LARGE_MESSAGE));
       else if (xhr.status >= 500) reject(new Error(`Errore di connessione o timeout del server (HTTP ${xhr.status}).`));
       else reject(new Error(`Caricamento fallito (HTTP ${xhr.status}).`));
     };

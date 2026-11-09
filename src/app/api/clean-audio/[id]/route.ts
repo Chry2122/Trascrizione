@@ -36,7 +36,7 @@ function parseRange(header: string | null, size: number): { start: number; end: 
 export async function GET(request: NextRequest, ctx: RouteContext<"/api/clean-audio/[id]">) {
   const { id } = await ctx.params;
   const result = await loadResult(id);
-  const info = result ? await stat(result.filePath).catch(() => null) : null;
+  const info = result ? await stat(/*turbopackIgnore: true*/ result.filePath).catch(() => null) : null;
   if (!result || !info) {
     return NextResponse.json({ error: "Audio pulito non trovato o scaduto." }, { status: 404 });
   }
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/clean-au
   headers.set("Content-Length", String(end - start + 1));
   if (range) headers.set("Content-Range", `bytes ${start}-${end}/${info.size}`);
 
-  const body = Readable.toWeb(createReadStream(result.filePath, { start, end })) as ReadableStream<Uint8Array>;
+  const body = Readable.toWeb(createReadStream(/*turbopackIgnore: true*/ result.filePath, { start, end })) as ReadableStream<Uint8Array>;
   return new Response(body, { status: range ? 206 : 200, headers });
 }
 
